@@ -115,10 +115,32 @@ TabPane {
 .actions-row {
     height: auto;
     margin-top: 1;
-    align-horizontal: right;
+    layout: horizontal;
+    align-horizontal: left;
+    overflow-x: auto;
 }
 
 .actions-row Button {
+    margin-right: 1;
+    margin-bottom: 1;
+}
+
+#report-bar {
+    height: auto;
+    padding: 1 2;
+    background: #151d2e;
+    border: round #38bdf8;
+    margin-bottom: 1;
+    align-vertical: middle;
+}
+
+#report-bar Label {
+    width: 1fr;
+    color: #38bdf8;
+    text-style: bold;
+}
+
+#report-bar Button {
     margin-left: 1;
 }
 
@@ -182,6 +204,8 @@ class TutorWatcherApp(App):
         Binding("q", "quit", "退出", show=True),
         Binding("r", "run_scan", "立即抓取", show=True),
         Binding("o", "open_report", "打开报告", show=True),
+        Binding("p", "copy_report_path", "复制报告路径", show=True),
+        Binding("c", "copy_candidate_url", "复制链接", show=True),
         Binding("f", "refresh_data", "刷新", show=True),
     ]
 
@@ -237,7 +261,10 @@ class TutorWatcherApp(App):
                     with ScrollableContainer(id="candidate-detail-container"):
                         yield Static(id="candidate-detail-content")
                         with Horizontal(classes="actions-row"):
-                            yield Button("在浏览器打开", id="btn-open-url", variant="primary")
+                            yield Button("打开原网页", id="btn-open-url", variant="primary")
+                            yield Button("复制网页链接", id="btn-copy-url")
+                            yield Button("打开HTML报告", id="btn-open-report", variant="warning")
+                            yield Button("复制报告路径", id="btn-copy-report")
                             yield Button("标记为已联系", id="btn-mark-contacted", variant="success")
 
             with TabPane("未入选记录", id="tab-rejected"):
@@ -253,6 +280,10 @@ class TutorWatcherApp(App):
                     yield Checkbox("强制忽略时间窗口", id="chk-force-schedule", value=True)
                     yield Checkbox("极速 Embedding 模式", id="chk-embedding-mode", value=False)
                     yield Checkbox("跳过所有语义匹配", id="chk-no-llm", value=False)
+                with Horizontal(id="report-bar"):
+                    yield Label("最新报告路径: 检测中...", id="lbl-report-path")
+                    yield Button("打开报告", id="btn-runner-open-report", variant="warning")
+                    yield Button("复制绝对路径", id="btn-runner-copy-report")
                 yield RichLog(id="runner-log", highlight=True, markup=True)
 
             with TabPane("历史与统计", id="tab-history"):
@@ -367,6 +398,17 @@ class TutorWatcherApp(App):
         # 5. Refresh Config summary
         self.update_config_view()
 
+        # 6. Refresh report path label in runner tab
+        report_path_obj = Path(self.config.get("storage", {}).get("report", "data/report.html")).resolve()
+        try:
+            lbl = self.query_one("#lbl-report-path", Label)
+            if report_path_obj.is_file():
+                lbl.update(f"最新报告路径: {report_path_obj}")
+            else:
+                lbl.update("最新报告路径: 尚未生成 (抓取后自动生成)")
+        except Exception:
+            pass
+
     def show_candidate_detail(self, index: int) -> None:
         if index < 0 or index >= len(self.current_candidates):
             return
@@ -386,6 +428,10 @@ class TutorWatcherApp(App):
         )
         income_str = f"{extracted.get('total_income')} 元" if extracted.get("total_income") else "无法预估"
 
+        report_path_obj = Path(self.config.get("storage", {}).get("report", "data/report.html")).resolve()
+        report_path_str = str(report_path_obj)
+        detail_url_str = listing.get("detail_url") or "https://zjjjzx.com/teacher/"
+
         content = f"""[b class="detail-title"]#{index + 1} {listing.get('title', '')}[/b]
 [dim class="detail-sub"]编号: {item.get('external_id')} | 发布时间: {listing.get('publish_date')} | 综合评分: [bold green]{item.get('score', 0):g}[/bold green][/dim]
 
@@ -397,6 +443,10 @@ class TutorWatcherApp(App):
   • [cyan]授课方式:[/cyan] {listing.get('teaching_mode')}
   • [cyan]授课时间:[/cyan] {extracted.get('schedule_text') or listing.get('teaching_time')}
   • [cyan]地址区域:[/cyan] {listing.get('address')}
+
+[b]▍可复制绝对路径与网络链接[/b]
+  • [cyan]网页详情地址:[/cyan] {detail_url_str}
+  • [cyan]HTML报告路径:[/cyan] {report_path_str}
 
 [b]▍LLM 推荐理由[/b]
 [div class="detail-reason"]{item.get('llm_reason') or '无评估信息'}[/div]
@@ -492,19 +542,83 @@ class TutorWatcherApp(App):
             self.action_run_scan()
         elif button_id == "btn-open-url":
             self.open_current_candidate_url()
+        elif button_id == "btn-copy-url":
+            self.copy_current_candidate_url()
+        elif button_id in ("btn-open-report", "btn-runner-open-report"):
+            self.action_open_report()
+        elif button_id in ("btn-copy-report", "btn-runner-copy-report"):
+            self.action_copy_report_path()
         elif button_id == "btn-mark-contacted":
             self.mark_current_candidate_contacted()
+
+    def safe_open_target(self, target: str | Path) -> bool:
+        try:
+            target_str = str(target)
+            path_obj = Path(target_str)
+            if path_obj.is_file():
+                resolved = str(path_obj.resolve())
+                if sys.platform == "win32" and hasattr(os, "startfile"):
+                    os.startfile(resolved)
+                    return True
+                else:
+                    webbrowser.open(path_obj.resolve().as_uri())
+                    return True
+            else:
+                if sys.platform == "win32" and hasattr(os, "startfile"):
+                    try:
+                        os.startfile(target_str)
+                        return True
+                    except Exception:
+                        pass
+                webbrowser.open(target_str)
+                return True
+        except Exception as err:
+            self.notify(f"打开失败: {err}", severity="error")
+            return False
+
+    def safe_copy_text(self, text: str, description: str = "内容") -> bool:
+        copied = False
+        try:
+            import pyperclip
+            pyperclip.copy(text)
+            copied = True
+        except Exception:
+            pass
+        if not copied and sys.platform == "win32":
+            try:
+                import subprocess
+                subprocess.run(["clip"], input=text.encode("utf-16"), check=True)
+                copied = True
+            except Exception:
+                pass
+        if copied:
+            self.notify(f"已复制{description}到剪贴板！")
+            return True
+        else:
+            self.notify(f"复制失败，请手动划词复制: {text}", severity="warning")
+            return False
 
     def open_current_candidate_url(self) -> None:
         if not self.current_candidates or self.selected_candidate_idx >= len(self.current_candidates):
             return
         item = self.current_candidates[self.selected_candidate_idx]
-        url = item.get("listing", {}).get("detail_url")
-        if url:
-            webbrowser.open(url)
+        url = item.get("listing", {}).get("detail_url") or "https://zjjjzx.com/teacher/"
+        if self.safe_open_target(url):
             self.notify(f"已在浏览器中打开: {url}")
-        else:
-            self.notify("该条目没有详情页 URL", severity="warning")
+
+    def copy_current_candidate_url(self) -> None:
+        if not self.current_candidates or self.selected_candidate_idx >= len(self.current_candidates):
+            return
+        item = self.current_candidates[self.selected_candidate_idx]
+        url = item.get("listing", {}).get("detail_url") or "https://zjjjzx.com/teacher/"
+        self.safe_copy_text(url, "原网页链接")
+
+    def action_copy_candidate_url(self) -> None:
+        self.copy_current_candidate_url()
+
+    def action_copy_report_path(self) -> None:
+        report_path = Path(self.config.get("storage", {}).get("report", "data/report.html")).resolve()
+        self.safe_copy_text(str(report_path), "HTML报告绝对路径")
 
     def mark_current_candidate_contacted(self) -> None:
         if not self.store or not self.current_candidates:
@@ -601,8 +715,8 @@ class TutorWatcherApp(App):
     def action_open_report(self) -> None:
         report_path = Path(self.config.get("storage", {}).get("report", "data/report.html")).resolve()
         if report_path.is_file():
-            webbrowser.open(report_path.as_uri())
-            self.notify(f"已打开报告：{report_path}")
+            if self.safe_open_target(report_path):
+                self.notify(f"已在默认浏览器打开报告: {report_path.name}")
         else:
             self.notify("报告文件尚未生成，请先执行抓取", severity="warning")
 
