@@ -62,6 +62,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     config = load_config(config_path)
 
+    if getattr(args, "preset", None):
+        from zjjjzx.core.keyword_filter import PRESETS
+        if args.preset in PRESETS:
+            config["rules"] = PRESETS[args.preset]
+            console.print(f"[cyan]已临时套用预设规则：{PRESETS[args.preset]['name']}[/cyan]")
+        else:
+            console.print(f"[yellow]未找到预设 '{args.preset}'，可用预设: {', '.join(PRESETS.keys())}[/yellow]")
+
     if args.city:
         if "source" in config:
             config["source"]["city"] = args.city
@@ -413,6 +421,54 @@ def cmd_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rules(args: argparse.Namespace) -> int:
+    from zjjjzx.core.keyword_filter import PRESETS
+    load_dotenv()
+    cfg_file = find_file(DEFAULT_CONFIG_NAME)
+    config = load_config(cfg_file) if cfg_file else load_config()
+
+    if getattr(args, "apply", None):
+        preset_key = args.apply
+        if preset_key not in PRESETS:
+            console.print(f"[bold red]错误：[/bold red] 未知的预设模板 '{preset_key}'")
+            console.print(f"可用预设列表: [cyan]{', '.join(PRESETS.keys())}[/cyan]")
+            return 1
+        preset = PRESETS[preset_key]
+        config["rules"] = preset
+        if cfg_file:
+            import json
+            cfg_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+            console.print(f"[bold green]✓ 成功将预设模板 '{preset['name']}' 写入配置文件 {cfg_file.name}！[/bold green]")
+        else:
+            console.print("[red]错误：未找到 config.json 无法持久化写入[/red]")
+            return 1
+        return 0
+
+    table = Table(title="当前活跃过滤规则 (Active Rules)", box=ROUNDED)
+    table.add_column("规则项", style="bold cyan")
+    table.add_column("当前配置值", style="white")
+    rules = config.get("rules", {})
+    table.add_row("教师性别 (Gender)", rules.get("user_gender", "未指定"))
+    table.add_row("年级范围 (Grades)", f"{rules.get('min_grade', 1)} ~ {rules.get('max_grade', 10)} 年级")
+    table.add_row("允许科目 (Allowed)", ", ".join(rules.get("allowed_subjects", [])) or "全学科放行 (*)")
+    table.add_row("禁用学科 (Forbidden)", ", ".join(rules.get("forbidden_subjects", [])) or "无黑名单")
+    table.add_row("排除限定词 (Keywords)", ", ".join(rules.get("exclude_keywords", [])) or "无")
+    console.print(table)
+
+    p_table = Table(title="可用身份预设模板 (Available Presets)", box=ROUNDED)
+    p_table.add_column("标识 (Key)", style="bold cyan", width=22)
+    p_table.add_column("名称", style="green", width=28)
+    p_table.add_column("涵盖科目", style="yellow")
+    for k, v in PRESETS.items():
+        subjs = ", ".join(v.get("allowed_subjects", [])[:6])
+        if len(v.get("allowed_subjects", [])) > 6:
+            subjs += "..."
+        p_table.add_row(k, v["name"], subjs)
+    console.print(p_table)
+    console.print("提示：运行 [cyan]zjjjzx rules --apply <preset_key>[/cyan] 可一键套用并写入配置文件。")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="zjjjzx",
@@ -431,6 +487,10 @@ def main() -> int:
     p_run.add_argument("--interval", type=float, default=None, help="轮询间隔小时数")
     p_run.add_argument("--no-llm", action="store_true", help="跳过 LLM 语义评估，只进行硬过滤与测距")
     p_run.add_argument("--no-rules", action="store_true", help="跳过本地规则与关键词过滤")
+    p_run.add_argument(
+        "-p", "--preset",
+        help="临时套用预设身份模板执行流水线 (如 science, liberal_arts, primary_homework, art_sports, open)",
+    )
     p_run.add_argument(
         "-m", "--method",
         choices=["llm", "embedding", "hybrid"],
@@ -484,6 +544,10 @@ def main() -> int:
     # config
     subparsers.add_parser("config", help="查看并校验当前配置与 API 密钥")
 
+    # rules
+    p_rules = subparsers.add_parser("rules", help="查看与管理过滤规则及身份预设模板")
+    p_rules.add_argument("--apply", help="一键套用指定预设模板并持久化保存 (如 science, liberal_arts, primary_homework, open)")
+
     args = parser.parse_args()
 
     if not args.subcommand:
@@ -497,6 +561,7 @@ def main() -> int:
         "run": cmd_run,
         "tui": cmd_tui,
         "web": cmd_web,
+        "rules": cmd_rules,
         "candidates": cmd_candidates,
         "list": cmd_candidates,
         "rejected": cmd_rejected,

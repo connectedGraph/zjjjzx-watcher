@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 from zjjjzx.config import find_file, load_config, load_dotenv, validate_config
 from zjjjzx.core.engine import run_pipeline
-from zjjjzx.core.keyword_filter import KeywordFilter, RuleFilterConfig
+from zjjjzx.core.keyword_filter import KeywordFilter, RuleFilterConfig, PRESETS
 from zjjjzx.core.store import Store
 
 
@@ -62,6 +62,8 @@ class WebAppHandler(BaseHTTPRequestHandler):
             self._serve_index()
         elif path == "/api/config":
             self._api_get_config()
+        elif path == "/api/presets":
+            self._send_json({"presets": PRESETS})
         elif path == "/api/candidates":
             self._api_get_candidates()
         elif path == "/api/rejected":
@@ -456,13 +458,23 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
   <!-- TAB 1: Config & Rules -->
   <div id="tab-config" class="tab-content">
+    <div class="card" style="border: 1px solid #0284c7; background: #0c192c;">
+      <h2 style="color: #38bdf8;">⚡ 快速套用预设身份模板 (Presets)</h2>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">无论你是理科生、文科生、大学生全科陪读还是音体美特长，点击下方一键切换专属预设与过滤规则：</p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;" id="preset-buttons"></div>
+      <div id="preset-desc" style="font-size:12.5px; color:#93c5fd; margin-top:8px; min-height:18px;"></div>
+    </div>
+
     <div class="card">
       <h2>1. 科目与学科允许范围 (Allowed Subjects)</h2>
-      <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">勾选允许辅导的学科。只有命中所选学科的家教条目才会被保留：</p>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">命中所选学科的家教条目才会被保留（支持点击勾选或点击 × 移除标签）：</p>
       <div class="chips-group" id="subjects-chips"></div>
-      <div style="margin-top:10px;">
-        <button class="btn btn-outline" style="padding:4px 12px; font-size:12px;" onclick="presetSubjects(['数学', '英语'])">仅数学英语</button>
-        <button class="btn btn-outline" style="padding:4px 12px; font-size:12px; margin-left:6px;" onclick="presetSubjects(['数学', '英语', '作业辅导', '陪读', '陪写作业', '奥数'])">理科/辅导/陪读全选</button>
+      <div style="display:flex; gap:8px; margin-top:12px; align-items:center; flex-wrap:wrap;">
+        <input type="text" id="new-subject-input" class="form-control" style="width:240px;" placeholder="添加自定义科目 (回车添加)">
+        <button class="btn btn-outline" style="padding:6px 14px; font-size:13px;" onclick="addCustomSubject()">+ 添加科目</button>
+        <button class="btn btn-outline" style="padding:6px 14px; font-size:13px;" onclick="presetSubjects(['数学', '英语'])">仅数英</button>
+        <button class="btn btn-outline" style="padding:6px 14px; font-size:13px;" onclick="presetSubjects(['数学', '英语', '作业辅导', '陪读', '陪写作业', '奥数'])">数英辅导全选</button>
+        <button class="btn btn-outline" style="padding:6px 14px; font-size:13px; margin-left:auto;" onclick="allowAllSubjects()">全学科放行 (*)</button>
       </div>
     </div>
 
@@ -486,7 +498,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
           <select id="cfg-max-grade" class="form-control">
             <option value="6">小学 6 年级</option>
             <option value="9">初三 / 9年级</option>
-            <option value="10" selected>高一 / 10年级 (推荐)</option>
+            <option value="10" selected>高一 / 10年级</option>
             <option value="11">高二 / 11年级</option>
             <option value="12">高三 / 12年级</option>
           </select>
@@ -502,14 +514,14 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     </div>
 
     <div class="card">
-      <h2>3. 性别要求与排除限定关键词 (Disqualification Keywords)</h2>
+      <h2>3. 性别要求、排除限定词与黑名单</h2>
       <div class="form-grid">
         <div class="form-group">
           <label>家教老师性别 (User Gender)</label>
           <select id="cfg-user-gender" class="form-control">
             <option value="男">男性家教 (将自动拦截指定女老师/女大学生的单)</option>
             <option value="女">女性家教 (将自动拦截指定男老师的单)</option>
-            <option value="">不限</option>
+            <option value="">不限 (不作性别过滤)</option>
           </select>
         </div>
         <div class="form-group">
@@ -525,6 +537,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         <label>排除限定关键词 (若需求中包含则直接一票否决，逗号分隔)：</label>
         <input type="text" id="cfg-exclude-keywords" class="form-control" style="width:100%;"
                value="专职在校老师, 在校老师, 在职老师, 师范类, 师范专业, 机构老师, 专四, 专八, 雅思, 托福, 初中竞赛, 高中奥赛, 考研">
+      </div>
+
+      <div class="form-group" style="margin-top:10px;">
+        <label>未开放学科黑名单 (Forbidden Subjects，用逗号分隔，留空则不拦截)：</label>
+        <input type="text" id="cfg-forbidden-subjects" class="form-control" style="width:100%;"
+               value="语文, 物理, 化学, 生物, 科学, 社会, 历史, 地理, 政治, 体育, 羽毛球, 游泳, 画画, 美术, 书法, 钢琴, 乐器, 编程, 托管班">
       </div>
     </div>
 
@@ -572,7 +590,11 @@ HTML_DASHBOARD = """<!DOCTYPE html>
       </div>
     </div>
 
-    <div style="display:flex; justify-content:flex-end; gap:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; flex-wrap:wrap; gap:12px;">
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-outline" style="font-size:13px; padding:8px 16px;" onclick="exportRules()">📋 复制规则 JSON</button>
+        <button class="btn btn-outline" style="font-size:13px; padding:8px 16px;" onclick="importRulesPrompt()">📥 导入规则 JSON</button>
+      </div>
       <button class="btn btn-success" style="font-size:15px; padding:12px 32px;" onclick="saveConfig()">💾 保存配置并生效</button>
     </div>
   </div>
@@ -668,6 +690,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
 <script>
   let ALL_SUBJECTS = ['数学', '英语', '作业辅导', '陪读', '陪写作业', '奥数', '科学', '物理', '化学', '生物', '语文', '社会', '体育', '美术', '编程'];
+  let PRESETS_DATA = {};
   let currentConfig = {};
 
   function showToast(msg) {
@@ -687,24 +710,141 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     if (tabId === 'tab-rejected') loadRejected();
   }
 
+  function renderSubjectChips(allList, selectedList) {
+    const chipsEl = document.getElementById('subjects-chips');
+    chipsEl.innerHTML = '';
+    allList.forEach(subj => {
+      const isSel = selectedList.includes(subj) || selectedList.includes('*');
+      const chip = document.createElement('div');
+      chip.className = `chip ${isSel ? 'selected' : ''}`;
+      chip.innerHTML = `<span>${subj}</span><span style="margin-left:6px; opacity:0.6; font-size:12px; cursor:pointer;" onclick="event.stopPropagation(); removeSubject('${subj}')" title="删除该科目">×</span>`;
+      chip.onclick = () => chip.classList.toggle('selected');
+      chipsEl.appendChild(chip);
+    });
+  }
+
+  function addCustomSubject() {
+    const inp = document.getElementById('new-subject-input');
+    const val = inp.value.trim();
+    if (!val) return;
+    if (!ALL_SUBJECTS.includes(val)) ALL_SUBJECTS.push(val);
+    const selected = getSelectedSubjects();
+    if (!selected.includes(val)) selected.push(val);
+    renderSubjectChips(ALL_SUBJECTS, selected);
+    inp.value = '';
+    showToast(`已添加科目: 【${val}】`);
+  }
+
+  function removeSubject(subj) {
+    ALL_SUBJECTS = ALL_SUBJECTS.filter(s => s !== subj);
+    const selected = getSelectedSubjects().filter(s => s !== subj);
+    renderSubjectChips(ALL_SUBJECTS, selected);
+    showToast(`已移除科目: 【${subj}】`);
+  }
+
+  function getSelectedSubjects() {
+    return Array.from(document.querySelectorAll('#subjects-chips .chip.selected span:first-child')).map(el => el.innerText.trim());
+  }
+
+  function allowAllSubjects() {
+    renderSubjectChips(ALL_SUBJECTS, ALL_SUBJECTS);
+    showToast('已全学科开放！');
+  }
+
+  function presetSubjects(list) {
+    list.forEach(s => { if (!ALL_SUBJECTS.includes(s)) ALL_SUBJECTS.push(s); });
+    renderSubjectChips(ALL_SUBJECTS, list);
+    showToast('已选中指定科目组合');
+  }
+
+  async function loadPresets() {
+    try {
+      const res = await fetch('/api/presets');
+      const data = await res.json();
+      PRESETS_DATA = data.presets || {};
+      const container = document.getElementById('preset-buttons');
+      container.innerHTML = '';
+      Object.entries(PRESETS_DATA).forEach(([key, p]) => {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-outline';
+        btn.style.cssText = 'font-size:12px; padding:5px 12px;';
+        btn.innerText = p.name;
+        btn.onclick = () => applyPreset(key);
+        container.appendChild(btn);
+      });
+    } catch (e) {
+      console.error('加载预设失败:', e);
+    }
+  }
+
+  function applyPreset(presetKey) {
+    const p = PRESETS_DATA[presetKey];
+    if (!p) return;
+    document.getElementById('preset-desc').innerText = `【${p.name}】: ${p.description}`;
+
+    p.allowed_subjects.forEach(s => {
+      if (!ALL_SUBJECTS.includes(s) && s !== '*') ALL_SUBJECTS.push(s);
+    });
+    renderSubjectChips(ALL_SUBJECTS, p.allowed_subjects);
+
+    document.getElementById('cfg-min-grade').value = p.min_grade || 1;
+    document.getElementById('cfg-max-grade').value = p.max_grade || 10;
+    const hasEnglishGrad = p.special_grade_rules?.["英语"]?.exclude_grades?.includes(9);
+    document.getElementById('cfg-excl-english-grad').checked = !!hasEnglishGrad;
+    document.getElementById('cfg-exclude-keywords').value = (p.exclude_keywords || []).join(', ');
+    document.getElementById('cfg-forbidden-subjects').value = (p.forbidden_subjects || []).join(', ');
+
+    showToast(`✓ 已套用预设【${p.name}】，点击保存生效！`);
+  }
+
+  function exportRules() {
+    const rules = {
+      user_gender: document.getElementById('cfg-user-gender').value,
+      min_grade: parseInt(document.getElementById('cfg-min-grade').value, 10),
+      max_grade: parseInt(document.getElementById('cfg-max-grade').value, 10),
+      allowed_subjects: getSelectedSubjects(),
+      forbidden_subjects: document.getElementById('cfg-forbidden-subjects').value.split(',').map(s => s.trim()).filter(Boolean),
+      exclude_keywords: document.getElementById('cfg-exclude-keywords').value.split(',').map(s => s.trim()).filter(Boolean),
+      special_grade_rules: document.getElementById('cfg-excl-english-grad').checked ? { "英语": { "exclude_grades": [9, 12] } } : {},
+      allow_online: document.getElementById('cfg-allow-online').value === 'true',
+    };
+    navigator.clipboard.writeText(JSON.stringify(rules, null, 2));
+    showToast('已复制完整规则 JSON 到剪贴板！');
+  }
+
+  function importRulesPrompt() {
+    const raw = prompt('请粘贴要导入的规则 JSON：');
+    if (!raw) return;
+    try {
+      const rules = JSON.parse(raw);
+      if (rules.allowed_subjects) {
+        rules.allowed_subjects.forEach(s => { if (!ALL_SUBJECTS.includes(s) && s !== '*') ALL_SUBJECTS.push(s); });
+        renderSubjectChips(ALL_SUBJECTS, rules.allowed_subjects);
+      }
+      if (rules.min_grade) document.getElementById('cfg-min-grade').value = rules.min_grade;
+      if (rules.max_grade) document.getElementById('cfg-max-grade').value = rules.max_grade;
+      if (rules.user_gender) document.getElementById('cfg-user-gender').value = rules.user_gender;
+      if (rules.allow_online !== undefined) document.getElementById('cfg-allow-online').value = rules.allow_online ? 'true' : 'false';
+      if (rules.exclude_keywords) document.getElementById('cfg-exclude-keywords').value = rules.exclude_keywords.join(', ');
+      if (rules.forbidden_subjects) document.getElementById('cfg-forbidden-subjects').value = rules.forbidden_subjects.join(', ');
+      if (rules.special_grade_rules?.["英语"]) document.getElementById('cfg-excl-english-grad').checked = true;
+      showToast('✓ 规则导入成功！点击保存按钮写入配置。');
+    } catch (e) {
+      alert('解析规则 JSON 失败: ' + e.message);
+    }
+  }
+
   async function loadConfig() {
     try {
+      await loadPresets();
       const res = await fetch('/api/config');
       const data = await res.json();
       currentConfig = data.config;
 
       // Populate subjects chips
-      const chipsEl = document.getElementById('subjects-chips');
-      chipsEl.innerHTML = '';
       const allowed = currentConfig.rules?.allowed_subjects || currentConfig.profile?.subjects || ['数学', '英语'];
-      ALL_SUBJECTS.forEach(subj => {
-        const isSel = allowed.includes(subj);
-        const chip = document.createElement('div');
-        chip.className = `chip ${isSel ? 'selected' : ''}`;
-        chip.innerText = subj;
-        chip.onclick = () => chip.classList.toggle('selected');
-        chipsEl.appendChild(chip);
-      });
+      allowed.forEach(s => { if (!ALL_SUBJECTS.includes(s) && s !== '*') ALL_SUBJECTS.push(s); });
+      renderSubjectChips(ALL_SUBJECTS, allowed);
 
       // Populate form
       document.getElementById('cfg-min-grade').value = currentConfig.rules?.min_grade || 1;
@@ -712,6 +852,10 @@ HTML_DASHBOARD = """<!DOCTYPE html>
       document.getElementById('cfg-user-gender').value = currentConfig.rules?.user_gender || currentConfig.profile?.user_gender || '男';
       document.getElementById('cfg-allow-online').value = (currentConfig.profile?.allow_online ? 'true' : 'false');
       document.getElementById('cfg-exclude-keywords').value = (currentConfig.rules?.exclude_keywords || []).join(', ');
+      document.getElementById('cfg-forbidden-subjects').value = (currentConfig.rules?.forbidden_subjects || []).join(', ');
+
+      const hasEnglishGrad = currentConfig.rules?.special_grade_rules?.["英语"]?.exclude_grades?.includes(9);
+      document.getElementById('cfg-excl-english-grad').checked = hasEnglishGrad !== false;
 
       document.getElementById('cfg-maps-origin').value = currentConfig.maps?.origin || '';
       document.getElementById('cfg-max-distance').value = (currentConfig.profile?.max_distance_meters || 10000) / 1000;
@@ -728,16 +872,10 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     }
   }
 
-  function presetSubjects(list) {
-    document.querySelectorAll('#subjects-chips .chip').forEach(chip => {
-      if (list.includes(chip.innerText)) chip.classList.add('selected');
-      else chip.classList.remove('selected');
-    });
-  }
-
   async function saveConfig() {
-    const selectedSubjects = Array.from(document.querySelectorAll('#subjects-chips .chip.selected')).map(c => c.innerText);
+    const selectedSubjects = getSelectedSubjects();
     const excludeKw = document.getElementById('cfg-exclude-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
+    const forbiddenSubj = document.getElementById('cfg-forbidden-subjects').value.split(',').map(s => s.trim()).filter(Boolean);
 
     currentConfig.profile = currentConfig.profile || {};
     currentConfig.rules = currentConfig.rules || {};
@@ -746,6 +884,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
     currentConfig.rules.allowed_subjects = selectedSubjects;
     currentConfig.profile.subjects = selectedSubjects;
+    currentConfig.rules.forbidden_subjects = forbiddenSubj;
     currentConfig.rules.min_grade = parseInt(document.getElementById('cfg-min-grade').value, 10);
     currentConfig.rules.max_grade = parseInt(document.getElementById('cfg-max-grade').value, 10);
     currentConfig.rules.user_gender = document.getElementById('cfg-user-gender').value;
@@ -756,9 +895,11 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     currentConfig.rules.special_grade_rules = hasEnglishGradExcl ? { "英语": { "exclude_grades": [9, 12] } } : {};
 
     currentConfig.profile.allow_online = (document.getElementById('cfg-allow-online').value === 'true');
+    currentConfig.rules.allow_online = currentConfig.profile.allow_online;
     currentConfig.maps.origin = document.getElementById('cfg-maps-origin').value;
     currentConfig.maps.city = document.getElementById('cfg-city').value;
     currentConfig.profile.max_distance_meters = parseFloat(document.getElementById('cfg-max-distance').value) * 1000;
+    currentConfig.rules.max_distance_meters = currentConfig.profile.max_distance_meters;
 
     currentConfig.llm.model = document.getElementById('cfg-llm-model').value;
     currentConfig.llm.url = document.getElementById('cfg-llm-url').value;

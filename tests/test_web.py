@@ -52,6 +52,13 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("secrets", data)
         self.assertIn("validation_issues", data)
 
+    def test_api_presets(self):
+        status, data = self._get("/api/presets")
+        self.assertEqual(status, 200)
+        self.assertIn("presets", data)
+        self.assertIn("science", data["presets"])
+        self.assertIn("liberal_arts", data["presets"])
+
     def test_api_stats(self):
         status, data = self._get("/api/stats")
         self.assertEqual(status, 200)

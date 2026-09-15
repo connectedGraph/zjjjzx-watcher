@@ -40,6 +40,88 @@ def parse_grade_ranks(grade_text: str) -> list[int]:
     return sorted(list(set(ranks)))
 
 
+PRESETS: dict[str, dict[str, Any]] = {
+    "balanced_math_english": {
+        "name": "数英与基础培优 (默认配置)",
+        "description": "适合理科/数英家教：小学至高一数学，初一二与高一二英语（排除初三高三中高考冲刺），排除文科与艺术",
+        "allowed_subjects": ["数学", "英语", "作业辅导", "作业", "陪读", "陪写作业", "奥数", "全科", "理科"],
+        "forbidden_subjects": [
+            "语文", "物理", "化学", "生物", "科学", "社会",
+            "历史", "地理", "政治", "体育", "羽毛球", "游泳",
+            "画画", "美术", "书法", "钢琴", "乐器", "编程", "托管班"
+        ],
+        "min_grade": 1,
+        "max_grade": 10,
+        "exclude_keywords": [
+            "专职在校老师", "在校老师", "在职老师", "师范类", "师范专业",
+            "机构老师", "专四", "专八", "雅思", "托福", "初中竞赛", "高中奥赛", "考研"
+        ],
+        "special_grade_rules": {
+            "英语": {"exclude_grades": [9, 12]}
+        },
+    },
+    "science": {
+        "name": "纯理科名师 (数学/物理/化学/生物/奥数)",
+        "description": "适合数理化生专业家教：支持初高中理科与竞赛培优，排除所有纯文科与艺术需求",
+        "allowed_subjects": ["数学", "物理", "化学", "生物", "科学", "奥数", "理综", "作业辅导"],
+        "forbidden_subjects": ["语文", "英语", "历史", "地理", "政治", "音乐", "画画", "美术", "书法", "钢琴", "乐器", "体育"],
+        "min_grade": 1,
+        "max_grade": 12,
+        "exclude_keywords": [
+            "专职在校老师", "在校老师", "在职老师", "师范专业", "考研",
+        ],
+        "special_grade_rules": {},
+    },
+    "liberal_arts": {
+        "name": "文科语言达人 (语文/英语/文综/写作)",
+        "description": "适合文科、外语、师范文史类家教：专注中英文读写与文科综合，排除高等理化竞赛",
+        "allowed_subjects": ["英语", "语文", "历史", "地理", "政治", "文综", "作文", "阅读", "作业辅导", "陪读"],
+        "forbidden_subjects": ["物理", "化学", "生物", "奥数", "高数", "初中竞赛", "高中奥赛"],
+        "min_grade": 1,
+        "max_grade": 12,
+        "exclude_keywords": [
+            "专职在校老师", "在校老师", "在职老师", "师范类", "师范专业", "专八", "雅思", "托福",
+        ],
+        "special_grade_rules": {},
+    },
+    "primary_homework": {
+        "name": "小学全科与晚托陪读 (全科/作业/习惯辅导)",
+        "description": "适合大学生课后兼职辅导：专注小学 1-6 年级全科作业检查与陪读，排除初高中所有科目",
+        "allowed_subjects": ["作业辅导", "陪读", "陪写作业", "全科", "小学数学", "小学英语", "小学语文", "数学", "英语", "语文"],
+        "forbidden_subjects": ["物理", "化学", "生物", "初中", "高中", "中考", "高考", "竞赛"],
+        "min_grade": 1,
+        "max_grade": 6,
+        "exclude_keywords": [
+            "专职在校老师", "在校老师", "在职老师", "奥赛", "考研",
+        ],
+        "special_grade_rules": {},
+    },
+    "art_sports": {
+        "name": "艺体与编程特长 (音乐/美术/书法/球类/少儿编程)",
+        "description": "适合艺术、体育或计算机专业家教：专注技能与兴趣特长培养",
+        "allowed_subjects": [
+            "画画", "美术", "书法", "钢琴", "乐器", "吉他", "古筝", "声乐",
+            "体育", "羽毛球", "网球", "游泳", "篮球", "少儿编程", "编程", "Python", "C++", "围棋", "象棋"
+        ],
+        "forbidden_subjects": ["中考", "高考", "奥赛"],
+        "min_grade": 1,
+        "max_grade": 12,
+        "exclude_keywords": ["专业考级十级必须", "在校在职教研员"],
+        "special_grade_rules": {},
+    },
+    "open": {
+        "name": "宽松通用模式 (全学科全学段开放)",
+        "description": "不做科目黑白名单拦截，仅根据地图驾车距离与性别做最基础筛选",
+        "allowed_subjects": ["*"],
+        "forbidden_subjects": [],
+        "min_grade": 1,
+        "max_grade": 12,
+        "exclude_keywords": ["专职在校老师", "在职在编老师"],
+        "special_grade_rules": {},
+    },
+}
+
+
 @dataclass
 class RuleFilterConfig:
     user_gender: str = "男"
@@ -69,6 +151,35 @@ class RuleFilterConfig:
     allow_online: bool = False
     max_distance_meters: float | None = 10000.0
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "user_gender": self.user_gender,
+            "min_grade": self.min_grade,
+            "max_grade": self.max_grade,
+            "allowed_subjects": self.allowed_subjects,
+            "forbidden_subjects": self.forbidden_subjects,
+            "exclude_keywords": self.exclude_keywords,
+            "special_grade_rules": self.special_grade_rules,
+            "allow_online": self.allow_online,
+            "max_distance_meters": self.max_distance_meters,
+        }
+
+    @classmethod
+    def from_preset(cls, preset_key: str, **overrides: Any) -> RuleFilterConfig:
+        preset_data = PRESETS.get(preset_key, PRESETS["balanced_math_english"])
+        merged = {**preset_data, **overrides}
+        return cls(
+            user_gender=merged.get("user_gender", "男"),
+            min_grade=merged.get("min_grade", 1),
+            max_grade=merged.get("max_grade", 10),
+            allowed_subjects=list(merged.get("allowed_subjects", [])),
+            forbidden_subjects=list(merged.get("forbidden_subjects", [])),
+            exclude_keywords=list(merged.get("exclude_keywords", [])),
+            special_grade_rules=dict(merged.get("special_grade_rules", {})),
+            allow_online=bool(merged.get("allow_online", False)),
+            max_distance_meters=merged.get("max_distance_meters", 10000.0),
+        )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RuleFilterConfig:
         rules = data.get("rules", {})
@@ -82,16 +193,16 @@ class RuleFilterConfig:
             allowed_subjects=rules.get("allowed_subjects") or profile.get("subjects") or [
                 "数学", "英语", "作业辅导", "陪读", "陪写作业", "奥数", "全科", "理科"
             ],
-            forbidden_subjects=rules.get("forbidden_subjects") or [
+            forbidden_subjects=rules.get("forbidden_subjects") if "forbidden_subjects" in rules else [
                 "语文", "物理", "化学", "生物", "科学", "社会",
                 "历史", "地理", "政治", "体育", "羽毛球", "游泳",
                 "画画", "美术", "书法", "钢琴", "乐器", "编程", "托管班",
             ],
-            exclude_keywords=rules.get("exclude_keywords") or [
+            exclude_keywords=rules.get("exclude_keywords") if "exclude_keywords" in rules else [
                 "专职在校老师", "在校老师", "在职老师", "师范类", "师范专业",
                 "机构老师", "专四", "专八", "雅思", "托福", "初中竞赛", "高中奥赛", "考研",
             ],
-            special_grade_rules=rules.get("special_grade_rules") or {
+            special_grade_rules=rules.get("special_grade_rules") if "special_grade_rules" in rules else {
                 "英语": {"exclude_grades": [9, 12]}
             },
             allow_online=bool(rules.get("allow_online", profile.get("allow_online", False))),
@@ -148,11 +259,16 @@ class KeywordFilter:
 
         # 4. 禁用未开放学科检测
         text_subject = f"{title} {subject}"
-        for forb in cfg.forbidden_subjects:
+        # 允许列表中若显式包含了某个学科，则优先予以放行，防止与默认黑名单误冲突
+        effective_forbidden = [
+            forb for forb in cfg.forbidden_subjects
+            if forb not in cfg.allowed_subjects
+        ]
+        for forb in effective_forbidden:
             if forb in text_subject:
                 return False, f"包含未开放学科: 【{forb}】"
 
-        # 5. 允许科目检测（必须命中至少一个允许的学科或包含全科/陪读）
+        # 5. 允许科目检测（必须命中至少一个允许的学科或包含全科/陪读；若包含 '*' 则全科目放行）
         if cfg.allowed_subjects and "*" not in cfg.allowed_subjects:
             matched_subject = any(s in subject or s in title for s in cfg.allowed_subjects)
             if not matched_subject:

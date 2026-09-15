@@ -110,8 +110,16 @@ python main.py run
 python main.py run --dry-run             # Dry run mode (don't mark as notified)
 python main.py run --no-llm              # Rule-based filter only (skips LLM)
 python main.py run --force               # Ignore schedule window restrictions
+python main.py run --preset science      # Temporarily apply science preset (science/liberal_arts/primary_homework/open)
 python main.py run --open-report         # Automatically open generated HTML report
 python main.py run --loop --interval 2   # Run in polling loop every 2 hours
+
+# Manage & Apply Identity Presets (reusable for others)
+python main.py rules                     # Display active rules & available presets
+python main.py rules --apply science     # Switch to Math/Physics/Olympiad preset
+python main.py rules --apply liberal_arts # Switch to English/Chinese/Humanities preset
+python main.py rules --apply primary_homework # Switch to Elementary All-Subject Tutoring
+python main.py rules --apply open        # Open/Unrestricted all-subject mode
 
 # Query matched candidates
 python main.py candidates

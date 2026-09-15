@@ -150,6 +150,45 @@ class KeywordFilterTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("不接受纯线上授课", reason)
 
+    def test_presets_loading_and_customization(self):
+        from zjjjzx.core.keyword_filter import PRESETS
+        self.assertIn("science", PRESETS)
+        self.assertIn("liberal_arts", PRESETS)
+        self.assertIn("primary_homework", PRESETS)
+        self.assertIn("open", PRESETS)
+
+        # Test science preset: allows 物理 and 数学, forbids 语文
+        sci_cfg = RuleFilterConfig.from_preset("science", user_gender="男")
+        sci_filter = KeywordFilter(sci_cfg)
+        listing_phys = make_test_listing(subject="物理", title="高二物理培优辅导", grade="高二")
+        passed, reason = sci_filter.filter(listing_phys, distance_meters=3000)
+        self.assertTrue(passed, reason)
+
+        # Test liberal arts preset: allows 语文, forbids 物理
+        arts_cfg = RuleFilterConfig.from_preset("liberal_arts", user_gender="女")
+        arts_filter = KeywordFilter(arts_cfg)
+        listing_chinese = make_test_listing(subject="语文", title="初一语文阅读与写作", grade="初一", gender="女")
+        passed, reason = arts_filter.filter(listing_chinese, distance_meters=3000)
+        self.assertTrue(passed, reason)
+
+    def test_effective_forbidden_override(self):
+        # If user explicitly adds 物理 to allowed_subjects, it should override default forbidden_subjects
+        cfg = RuleFilterConfig(
+            allowed_subjects=["物理", "数学"],
+            forbidden_subjects=["物理", "化学", "语文"],  # 物理 in both!
+        )
+        kf = KeywordFilter(cfg)
+        listing = make_test_listing(subject="物理", title="初二物理辅导", grade="初二")
+        passed, reason = kf.filter(listing, distance_meters=2000)
+        self.assertTrue(passed, reason)
+
+    def test_open_preset_allows_any_subject(self):
+        open_cfg = RuleFilterConfig.from_preset("open")
+        open_filter = KeywordFilter(open_cfg)
+        listing_art = make_test_listing(subject="小提琴", title="少儿小提琴启蒙", grade="三年级")
+        passed, reason = open_filter.filter(listing_art, distance_meters=2000)
+        self.assertTrue(passed, reason)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -170,10 +170,18 @@ python main.py run
 python main.py run --dry-run             # 试运行（不标记条目为已通知）
 python main.py run --no-llm              # 跳过大模型，仅执行规则过滤与测距
 python main.py run --force               # 强制忽略时间窗口限制（默认 09:00-21:00）
+python main.py run --preset science      # 临时套用理科预设模板 (science/liberal_arts/primary_homework/open)
 python main.py run --open-report         # 执行完成后自动用浏览器弹出 HTML 报告
 python main.py run --loop --interval 2   # 持续轮询模式，每 2 小时执行一次
 
-# 2. 查询当前库内匹配候选
+# 2. 规则管理与身份预设模板切换 (他人复用核心功能)
+python main.py rules                     # 查看当前活跃规则与全部可用预设模板
+python main.py rules --apply science     # 一键套用纯理科模板 (数理化奥数) 并写入 config.json
+python main.py rules --apply liberal_arts # 一键套用文科语言模板 (语英文综) 并写入 config.json
+python main.py rules --apply primary_homework # 一键套用小学全科陪读模板 并写入 config.json
+python main.py rules --apply open        # 一键套用全学科开放宽松模式
+
+# 3. 查询当前库内匹配候选
 python main.py candidates
 python main.py candidates -n 10          # 限制条数
 
