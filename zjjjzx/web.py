@@ -49,6 +49,154 @@ def _append_log(msg: str, level: str = "info") -> None:
             _CURRENT_TASK["logs"] = _CURRENT_TASK["logs"][-500:]
 
 
+class RuntimeSupervisor:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.is_enabled = False
+        self.interval_minutes = 30
+        self.force_window = False
+        self.matcher_mode = "llm"
+        self.last_run_time: str | None = None
+        self.next_run_time: str | None = None
+        self.total_runs = 0
+        self.total_candidates_found = 0
+        self.errors_count = 0
+        self.last_error: str | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._new_candidates_queue: list[dict[str, Any]] = []
+
+    def start(self, interval_minutes: int = 30, force_window: bool = False, matcher_mode: str = "llm") -> None:
+        with self.lock:
+            if self.is_enabled:
+                return
+            self.is_enabled = True
+            self.interval_minutes = max(1, interval_minutes)
+            self.force_window = force_window
+            self.matcher_mode = matcher_mode
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._thread.start()
+            _append_log(f"⏰ [Runtime Supervisor] 定时监控守护已启动，轮询周期: {self.interval_minutes} 分钟", "info")
+
+    def stop(self) -> None:
+        with self.lock:
+            if not self.is_enabled:
+                return
+            self.is_enabled = False
+            self._stop_event.set()
+            self.next_run_time = None
+            _append_log("⏹ [Runtime Supervisor] 定时监控守护已停止", "warn")
+
+    def _execute_pipeline_task(self) -> None:
+        with _TASK_LOCK:
+            if _CURRENT_TASK["is_running"]:
+                _append_log("[Supervisor] 前一任务尚未结束，跳过本次轮询", "warn")
+                return
+            _CURRENT_TASK["is_running"] = True
+            _CURRENT_TASK["stage"] = "starting"
+            _CURRENT_TASK["progress_text"] = "守护调度执行中..."
+
+        load_dotenv()
+        cfg = load_config()
+
+        def on_event(event: str, data: dict[str, Any]) -> None:
+            with _TASK_LOCK:
+                if event == "stage_change":
+                    _CURRENT_TASK["stage"] = data.get("stage", "")
+                    _CURRENT_TASK["progress_text"] = data.get("message", "")
+                    _append_log(f"▶ {data.get('message')}", "info")
+                elif event == "listings_fetched":
+                    _CURRENT_TASK["progress_text"] = f"已获取 {data['count']} 条，正在计算距离..."
+                    _append_log(f"✓ 抓取页面成功，共发现 {data['count']} 条家教需求", "info")
+                elif event == "eval_progress":
+                    done = data["completed"]
+                    total = data["total"]
+                    listing = data["listing"]
+                    tag = "✓ 通过" if data["passed"] else "✗ 排除"
+                    _CURRENT_TASK["progress_text"] = f"并发评估 [{done}/{total}]: {listing.external_id}"
+                    _append_log(f"[{done}/{total}] {tag} [{listing.external_id}] {listing.title[:15]}", "info" if data["passed"] else "warn")
+                elif event == "candidate_added":
+                    cand = data['listing']
+                    self.total_candidates_found += 1
+                    with self.lock:
+                        self._new_candidates_queue.append({
+                            "external_id": cand.external_id,
+                            "title": cand.title,
+                            "price": cand.price_text,
+                            "time": time.strftime("%H:%M:%S")
+                        })
+                    _append_log(f"★ 发现匹配候选: [{cand.external_id}] {cand.title} ({data['points']}分)", "success")
+                elif event == "report_generated":
+                    _append_log(f"📄 HTML 报告生成成功: {data['path']}", "info")
+                elif event == "log":
+                    _append_log(data.get("message", ""), data.get("level", "info"))
+
+        try:
+            res = run_pipeline(
+                config=cfg,
+                dry_run=False,
+                ignore_schedule=self.force_window,
+                matcher_mode=self.matcher_mode,
+                concurrency=5,
+                on_event=on_event,
+            )
+            with _TASK_LOCK:
+                _CURRENT_TASK["last_result"] = {
+                    "fetched": res.get("fetched"),
+                    "new_count": res.get("new_count"),
+                    "candidates_count": len(res.get("candidates", [])),
+                    "report_path": res.get("report_path"),
+                }
+                _append_log(f"🎉 轮询批次完成：抓取 {res.get('fetched')} 条，新增 {res.get('new_count')} 条，合格候选 {len(res.get('candidates', []))} 条", "success")
+            self.total_runs += 1
+            self.last_run_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as err:
+            self.errors_count += 1
+            self.last_error = str(err)
+            _append_log(f"❌ 轮询批次执行异常: {err}", "error")
+        finally:
+            with _TASK_LOCK:
+                _CURRENT_TASK["is_running"] = False
+                _CURRENT_TASK["stage"] = "idle"
+                _CURRENT_TASK["progress_text"] = "等待下一次轮询"
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            self._execute_pipeline_task()
+
+            next_ts = time.time() + self.interval_minutes * 60
+            self.next_run_time = time.strftime("%H:%M:%S", time.localtime(next_ts))
+
+            for _ in range(self.interval_minutes * 60):
+                if self._stop_event.is_set():
+                    break
+                time.sleep(1)
+
+    def pop_notifications(self) -> list[dict[str, Any]]:
+        with self.lock:
+            items = list(self._new_candidates_queue)
+            self._new_candidates_queue.clear()
+            return items
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "is_enabled": self.is_enabled,
+            "interval_minutes": self.interval_minutes,
+            "force_window": self.force_window,
+            "matcher_mode": self.matcher_mode,
+            "last_run_time": self.last_run_time,
+            "next_run_time": self.next_run_time,
+            "total_runs": self.total_runs,
+            "total_candidates_found": self.total_candidates_found,
+            "errors_count": self.errors_count,
+            "last_error": self.last_error,
+        }
+
+
+SUPERVISOR = RuntimeSupervisor()
+
+
 class WebAppHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         # Suppress noisy standard HTTP access logs
@@ -74,6 +222,12 @@ class WebAppHandler(BaseHTTPRequestHandler):
             self._api_get_runs()
         elif path == "/api/task/status":
             self._api_get_task_status()
+        elif path == "/api/runtime/status":
+            self._send_json({
+                "supervisor": SUPERVISOR.status(),
+                "task": _CURRENT_TASK,
+                "notifications": SUPERVISOR.pop_notifications(),
+            })
         elif path == "/report":
             self._serve_report()
         else:
@@ -87,6 +241,8 @@ class WebAppHandler(BaseHTTPRequestHandler):
             self._api_save_config()
         elif path == "/api/task/run":
             self._api_start_run()
+        elif path == "/api/runtime/supervisor":
+            self._api_toggle_supervisor()
         elif path.startswith("/api/candidates/") and path.endswith("/decision"):
             ext_id = path.split("/")[3]
             self._api_update_decision(ext_id)
@@ -309,6 +465,19 @@ class WebAppHandler(BaseHTTPRequestHandler):
         threading.Thread(target=worker, daemon=True).start()
         self._send_json({"success": True, "message": "流水线任务已在后台启动"})
 
+    def _api_toggle_supervisor(self) -> None:
+        payload = self._read_json_body()
+        action = payload.get("action", "start")
+        if action == "start":
+            interval = int(payload.get("interval_minutes", 30))
+            force = bool(payload.get("force", False))
+            matcher_mode = payload.get("matcher_mode", "llm")
+            SUPERVISOR.start(interval_minutes=interval, force_window=force, matcher_mode=matcher_mode)
+            self._send_json({"success": True, "message": f"守护已启动，每 {interval} 分钟轮询一次", "supervisor": SUPERVISOR.status()})
+        else:
+            SUPERVISOR.stop()
+            self._send_json({"success": True, "message": "定时监控守护已停止", "supervisor": SUPERVISOR.status()})
+
     def _serve_report(self) -> None:
         cfg = load_config()
         report_path = Path(cfg.get("storage", {}).get("report", "data/report.html")).resolve()
@@ -444,7 +613,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
       <h1>zjjjzx 智能家教监控后台</h1>
       <p>规则与字符串过滤 · 高德/百度地图驾车测距 · LLM/Embedding 并发语义研判</p>
     </div>
-    <div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span id="daemon-badge" class="badge" style="background:#1e293b; color:#94a3b8; font-size:12.5px; border:1px solid #334155; padding:6px 12px;">⚪ 守护未启动</span>
       <a href="/report" target="_blank" class="btn btn-outline" style="text-decoration:none; display:inline-block; font-size:13px;">查看 HTML 报告 ↗</a>
     </div>
   </header>
@@ -656,8 +826,64 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
   <!-- TAB 4: Runner -->
   <div id="tab-runner" class="tab-content" style="display:none;">
+    <!-- Runtime Supervisor Card -->
+    <div class="card" style="border: 1px solid #059669; background: #062319;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div>
+          <h2 style="color: #34d399; margin-bottom:4px;">⏱ 定时监控守护 (Runtime Daemon)</h2>
+          <p style="font-size:13px; color:#a7f3d0; margin:0;">
+            无需在终端驻留 TUI，在 Web 后台保持挂机。发现符合条件的新家教自动推送系统桌面通知。
+          </p>
+        </div>
+        <div>
+          <button id="btn-toggle-supervisor" class="btn btn-success" onclick="toggleSupervisor()">
+            启动定时监控守护
+          </button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:16px;">
+        <div style="background:#041a12; padding:12px; border-radius:6px; border:1px solid #064e3b;">
+          <div style="font-size:12px; color:#6ee7b7;">守护运行状态</div>
+          <div id="spv-status-val" style="font-size:16px; font-weight:bold; color:#ecfdf5; margin-top:4px;">未运行</div>
+        </div>
+        <div style="background:#041a12; padding:12px; border-radius:6px; border:1px solid #064e3b;">
+          <div style="font-size:12px; color:#6ee7b7;">下次轮询时间</div>
+          <div id="spv-next-val" style="font-size:16px; font-weight:bold; color:#ecfdf5; margin-top:4px;">-</div>
+        </div>
+        <div style="background:#041a12; padding:12px; border-radius:6px; border:1px solid #064e3b;">
+          <div style="font-size:12px; color:#6ee7b7;">已执行轮数</div>
+          <div id="spv-runs-val" style="font-size:16px; font-weight:bold; color:#ecfdf5; margin-top:4px;">0 轮</div>
+        </div>
+        <div style="background:#041a12; padding:12px; border-radius:6px; border:1px solid #064e3b;">
+          <div style="font-size:12px; color:#6ee7b7;">发现合格候选</div>
+          <div id="spv-cand-val" style="font-size:16px; font-weight:bold; color:#ecfdf5; margin-top:4px;">0 条</div>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid #064e3b;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label style="font-size:13px; color:#a7f3d0;">轮询间隔:</label>
+          <select id="spv-interval" class="form-control" style="padding:4px 8px; width:130px; background:#041a12; border-color:#064e3b; color:#fff;">
+            <option value="5">每 5 分钟</option>
+            <option value="10">每 10 分钟</option>
+            <option value="15">每 15 分钟</option>
+            <option value="30" selected>每 30 分钟 (推荐)</option>
+            <option value="60">每 60 分钟</option>
+            <option value="120">每 120 分钟</option>
+          </select>
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#a7f3d0; cursor:pointer;">
+          <input type="checkbox" id="spv-force" checked> 忽略活跃时间窗口 (全天候轮询)
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#a7f3d0; cursor:pointer;">
+          <input type="checkbox" id="spv-notify" checked onchange="requestNotifyPermission()"> 启用桌面通知 (HTML5 Notification)
+        </label>
+      </div>
+    </div>
+
     <div class="card">
-      <h2>🚀 任务执行控制台</h2>
+      <h2>🚀 任务手动执行</h2>
       <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:16px;">
         <button class="btn btn-success" id="btn-run" onclick="triggerRun()">立即开始抓取与评估</button>
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
@@ -1010,6 +1236,158 @@ HTML_DASHBOARD = """<!DOCTYPE html>
   }
 
   let taskPollTimer = null;
+  let supervisorActive = false;
+
+  function requestNotifyPermission() {
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+  }
+
+  function fireDesktopNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, {
+          body: body,
+          icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><text y="20" font-size="20">🎯</text></svg>',
+        });
+      } catch (e) {}
+    }
+  }
+
+  async function toggleSupervisor() {
+    const btn = document.getElementById('btn-toggle-supervisor');
+    const interval = parseInt(document.getElementById('spv-interval').value || '30', 10);
+    const force = document.getElementById('spv-force').checked;
+    const matcher = document.getElementById('run-matcher').value;
+    const action = supervisorActive ? 'stop' : 'start';
+
+    if (action === 'start') {
+      requestNotifyPermission();
+    }
+
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/runtime/supervisor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: action,
+          interval_minutes: interval,
+          force: force,
+          matcher_mode: matcher,
+        }),
+      });
+      const data = await res.json();
+      showToast(data.message || '操作完成');
+      updateSupervisorUI(data.supervisor);
+    } catch (e) {
+      showToast('切换守护状态失败: ' + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function updateSupervisorUI(spv) {
+    if (!spv) return;
+    supervisorActive = !!spv.is_enabled;
+    const btn = document.getElementById('btn-toggle-supervisor');
+    const badge = document.getElementById('daemon-badge');
+    const statusVal = document.getElementById('spv-status-val');
+    const nextVal = document.getElementById('spv-next-val');
+    const runsVal = document.getElementById('spv-runs-val');
+    const candVal = document.getElementById('spv-cand-val');
+
+    if (btn) {
+      if (supervisorActive) {
+        btn.innerText = '停止监控守护';
+        btn.className = 'btn btn-outline';
+        btn.style.borderColor = '#ef4444';
+        btn.style.color = '#ef4444';
+      } else {
+        btn.innerText = '启动定时监控守护';
+        btn.className = 'btn btn-success';
+        btn.style.borderColor = '';
+        btn.style.color = '';
+      }
+    }
+
+    if (badge) {
+      if (supervisorActive) {
+        badge.style.background = 'rgba(16, 185, 129, .2)';
+        badge.style.color = 'var(--success)';
+        badge.style.border = '1px solid #059669';
+        badge.innerText = `🟢 守护监控中 (下次: ${spv.next_run_time || '执行中'})`;
+      } else {
+        badge.style.background = '#1e293b';
+        badge.style.color = '#94a3b8';
+        badge.style.border = '1px solid #334155';
+        badge.innerText = '⚪ 守护未启动';
+      }
+    }
+
+    if (statusVal) statusVal.innerText = supervisorActive ? `运行中 (${spv.interval_minutes}m/轮)` : '未运行';
+    if (nextVal) nextVal.innerText = spv.next_run_time || (supervisorActive ? '进行中' : '-');
+    if (runsVal) runsVal.innerText = `${spv.total_runs || 0} 轮`;
+    if (candVal) candVal.innerText = `${spv.total_candidates_found || 0} 条`;
+  }
+
+  let runtimePollTimer = null;
+
+  function startPollingRuntime() {
+    if (runtimePollTimer) clearInterval(runtimePollTimer);
+    runtimePollTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/runtime/status');
+        const data = await res.json();
+        updateSupervisorUI(data.supervisor);
+
+        if (data.notifications && data.notifications.length > 0) {
+          const notifyCheckbox = document.getElementById('spv-notify');
+          const notifyEnabled = notifyCheckbox ? notifyCheckbox.checked : true;
+          if (notifyEnabled) {
+            data.notifications.forEach(n => {
+              fireDesktopNotification(
+                `🎯 发现新家教: [${n.external_id}]`,
+                `${n.title} (${n.price || '面议'})`
+              );
+            });
+          }
+        }
+
+        const task = data.task;
+        if (task) {
+          const runStatusEl = document.getElementById('run-status-text');
+          if (runStatusEl) {
+            runStatusEl.innerText = task.progress_text || (task.is_running ? '执行中' : '就绪');
+          }
+          if (task.logs && task.logs.length) {
+            const logEl = document.getElementById('log-container');
+            if (logEl && (task.is_running || logEl.children.length <= 1)) {
+              logEl.innerHTML = '';
+              task.logs.forEach(l => {
+                const div = document.createElement('div');
+                div.className = `log-line ${l.level || 'info'}`;
+                div.innerHTML = `<span class="log-time">${l.time}</span> ${l.message}`;
+                logEl.appendChild(div);
+              });
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+          }
+          const btnRun = document.getElementById('btn-run');
+          if (btnRun) {
+            if (task.is_running) {
+              btnRun.disabled = true;
+              btnRun.innerText = '执行中...';
+            } else if (btnRun.disabled && !supervisorActive) {
+              btnRun.disabled = false;
+              btnRun.innerText = '立即开始抓取与评估';
+            }
+          }
+        }
+      } catch (e) {}
+    }, 2000);
+  }
 
   async function triggerRun() {
     const dryRun = document.getElementById('run-dry-run').checked;
@@ -1073,6 +1451,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
   window.onload = () => {
     loadConfig();
+    startPollingRuntime();
+    requestNotifyPermission();
   };
 </script>
 </body>
@@ -1080,11 +1460,20 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 """
 
 
-def run_web_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
+def run_web_server(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = True,
+    daemon: bool = False,
+    interval: int = 30,
+) -> None:
     server_address = (host, port)
     server = ThreadingHTTPServer(server_address, WebAppHandler)
     url = f"http://{host}:{port}"
     print(f"[Web Dashboard] 控制面板已启动: {url}")
+    if daemon:
+        print(f"[Web Supervisor] 启动后台监控守护，轮询周期: {interval} 分钟...")
+        SUPERVISOR.start(interval_minutes=interval, force_window=False, matcher_mode="llm")
     print(f"[Web Dashboard] 按 Ctrl+C 停止服务器...")
     if open_browser:
         try:
@@ -1099,6 +1488,7 @@ def run_web_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool
     except KeyboardInterrupt:
         print("\n[Web Dashboard] 服务器已停止。")
     finally:
+        SUPERVISOR.stop()
         server.server_close()
 
 

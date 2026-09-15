@@ -69,16 +69,20 @@ Launch the zero-dependency web dashboard at `http://127.0.0.1:8765`:
 
 ```bash
 python main.py web
-# or using package entrypoints:
-zjjjzx web
-zjjjzx-web
+# or start as a continuous background daemon (default 30m polling, with HTML5 desktop notifications):
+zjjjzx web --daemon --interval 30
+# or direct entrypoint:
+zjjjzx-web -d
 ```
 
 Features:
-- **Interactive Configuration**: Toggle allowed subjects (Math, English, Homework, Tutoring, etc.), configure minimum/maximum grade bounds (Grade 1 through 12), exclude demanding keywords (e.g. licensed teachers, IELTS), and safely manage API tokens.
+- **Runtime Daemon & Desktop Notifications**: Run unattended in the background with configurable polling intervals. Generates native system desktop notifications via the HTML5 Notification API upon discovering qualified candidates.
+- **Interactive Configuration & Presets**: Apply identity presets (science, liberal arts, primary school, open) with one click, add custom tags, configure grade bounds, and manage API keys safely.
 - **Candidate Hub**: View passed candidates with scoring, hourly wage calculations, driving distance, and one-click contact tagging.
 - **Rejection Diagnostic Panel**: Inspect why non-matching listings were eliminated.
-- **Pipeline Runner**: Trigger scans (LLM concurrency 5, Embedding mode, or Hybrid) with live streaming logs.
+- **Pipeline Runner**: Trigger manual scans (LLM concurrency 5, Embedding mode, or Hybrid) with live streaming logs.
+
+> **Tip**: For 24/7 monitoring, **choose either the TUI (`zjjjzx tui`) or Web daemon (`zjjjzx web -d`)**. Both share the same underlying SQLite store and configuration.
 
 ---
 

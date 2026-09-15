@@ -417,7 +417,13 @@ def cmd_tui(args: argparse.Namespace) -> int:
 
 def cmd_web(args: argparse.Namespace) -> int:
     from zjjjzx.web import run_web_server
-    run_web_server(host=args.host, port=args.port, open_browser=not args.no_open)
+    run_web_server(
+        host=args.host,
+        port=args.port,
+        open_browser=not args.no_open,
+        daemon=getattr(args, "daemon", False),
+        interval=getattr(args, "interval", 30),
+    )
     return 0
 
 
@@ -521,6 +527,8 @@ def main() -> int:
     p_web.add_argument("-p", "--port", type=int, default=8765, help="Web 服务器端口 (默认: 8765)")
     p_web.add_argument("--host", default="127.0.0.1", help="绑定主机地址 (默认: 127.0.0.1)")
     p_web.add_argument("--no-open", action="store_true", help="启动时不自动打开浏览器")
+    p_web.add_argument("-d", "--daemon", action="store_true", help="以守护模式启动（后台自动定时轮询抓取）")
+    p_web.add_argument("-i", "--interval", type=int, default=30, help="守护模式下的轮询间隔分钟数 (默认: 30)")
 
     # candidates
     p_cand = subparsers.add_parser("candidates", aliases=["list"], help="列出已匹配的合格候选")

@@ -90,6 +90,42 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("stage", data)
         self.assertIn("logs", data)
 
+    def test_api_runtime_status(self):
+        status, data = self._get("/api/runtime/status")
+        self.assertEqual(status, 200)
+        self.assertIn("supervisor", data)
+        self.assertIn("task", data)
+        self.assertIn("notifications", data)
+        self.assertIn("is_enabled", data["supervisor"])
+
+    def test_api_runtime_supervisor_lifecycle(self):
+        from unittest.mock import patch
+        from zjjjzx.web import SUPERVISOR
+
+        with patch.object(SUPERVISOR, "_execute_pipeline_task"):
+            # Start
+            status, data = self._post("/api/runtime/supervisor", {
+                "action": "start",
+                "interval_minutes": 10,
+                "force": True,
+                "matcher_mode": "embedding",
+            })
+            self.assertEqual(status, 200)
+            self.assertTrue(data["success"])
+            self.assertTrue(data["supervisor"]["is_enabled"])
+            self.assertEqual(data["supervisor"]["interval_minutes"], 10)
+
+            # Status check
+            status, check = self._get("/api/runtime/status")
+            self.assertEqual(status, 200)
+            self.assertTrue(check["supervisor"]["is_enabled"])
+
+            # Stop
+            status, stop_data = self._post("/api/runtime/supervisor", {"action": "stop"})
+            self.assertEqual(status, 200)
+            self.assertTrue(stop_data["success"])
+            self.assertFalse(stop_data["supervisor"]["is_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()
