@@ -16,10 +16,12 @@
 `zjjjzx-watcher` is designed for tutors and university students seeking tutoring jobs. It automates monitoring tutor boards, calculates exact driving distances via Map APIs (Baidu Maps / Amap), evaluates complex requirements with LLMs (DeepSeek / OpenAI compatible models), and presents matching candidates through both modern terminal interfaces (CLI & TUI) and responsive HTML reports.
 
 - ⚡ **Automated Crawling & Incremental Storage**: Built-in HTML card parser and SQLite store with smart deduplication.
+- 🔍 **Ultra-Fast Rule & Keyword Pre-Filter**: Instant local filtering powered by dataset heuristics—gender requirements, grade ranges (grades 1-12 mapping), allowed/forbidden subject rules, and high-qualification disqualifiers. Pre-filters 90%+ irrelevant listings in milliseconds.
 - 🗺️ **High-Precision Driving Distance Matrix**: Batch geocoding and driving route calculations with persistent local cache.
-- 🤖 **LLM Semantic Evaluation**: Define flexible natural-language criteria (e.g., "Accept elementary to grade 10 math; no junior high competitions; college CET-4 English level only; driving distance under 10 km"). The LLM extracts grade levels, calculates hourly wages, estimates total income, and structures requirements.
+- 🤖 **Concurrent LLM & Embedding Matching**: Supports multi-threaded LLM evaluations (concurrency 5), ultra-fast vector cosine similarity (Embedding mode), and hybrid two-stage screening.
+- 🌐 **Web Management Dashboard**: Zero-dependency built-in web management UI (`zjjjzx web` or `zjjjzx-web`) to configure subjects, grade boundaries, exclusion keywords, and API secrets, with real-time pipeline execution logs.
 - 🖥️ **Interactive Terminal UI (TUI)**: Sleek dashboard built on `Textual` featuring live candidate inspection, rejection diagnosis, asynchronous worker runner, and real-time logs.
-- 💻 **Feature-Rich CLI**: Built with `Rich`, offering commands like `run`, `candidates`, `rejected`, `history`, `stats`, `config`, and `report`.
+- 💻 **Feature-Rich CLI**: Built with `Rich`, offering commands like `run`, `web`, `tui`, `candidates`, `rejected`, `history`, `stats`, `config`, and `report`.
 - 📊 **Responsive HTML Reports**: Clean standalone report cards displaying all metrics and raw listing text.
 
 ---
@@ -58,6 +60,25 @@ Copy `config.example.json` to `config.json` and adjust your target area, home lo
 ```bash
 cp config.example.json config.json
 ```
+
+---
+
+## 🌐 Web Management Dashboard
+
+Launch the zero-dependency web dashboard at `http://127.0.0.1:8765`:
+
+```bash
+python main.py web
+# or using package entrypoints:
+zjjjzx web
+zjjjzx-web
+```
+
+Features:
+- **Interactive Configuration**: Toggle allowed subjects (Math, English, Homework, Tutoring, etc.), configure minimum/maximum grade bounds (Grade 1 through 12), exclude demanding keywords (e.g. licensed teachers, IELTS), and safely manage API tokens.
+- **Candidate Hub**: View passed candidates with scoring, hourly wage calculations, driving distance, and one-click contact tagging.
+- **Rejection Diagnostic Panel**: Inspect why non-matching listings were eliminated.
+- **Pipeline Runner**: Trigger scans (LLM concurrency 5, Embedding mode, or Hybrid) with live streaming logs.
 
 ---
 

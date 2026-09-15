@@ -91,8 +91,9 @@ def evaluation_scope(config: dict[str, Any]) -> str:
     material = json.dumps(
         {
             "profile": config.get("profile", {}),
+            "rules": config.get("rules", {}),
             "maps": config.get("maps", {}),
-            "semantic_schema": 2,
+            "semantic_schema": 3,
         },
         ensure_ascii=False,
         sort_keys=True,

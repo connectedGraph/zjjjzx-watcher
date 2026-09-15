@@ -108,6 +108,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 matcher_mode=getattr(args, "method", "llm"),
                 embedding_threshold=getattr(args, "threshold", None),
                 concurrency=getattr(args, "concurrency", 5),
+                enable_rules=not getattr(args, "no_rules", False),
                 on_event=on_event,
             )
 
@@ -406,6 +407,12 @@ def cmd_tui(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    from zjjjzx.web import run_web_server
+    run_web_server(host=args.host, port=args.port, open_browser=not args.no_open)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="zjjjzx",
@@ -423,6 +430,7 @@ def main() -> int:
     p_run.add_argument("--loop", action="store_true", help="持续轮询模式")
     p_run.add_argument("--interval", type=float, default=None, help="轮询间隔小时数")
     p_run.add_argument("--no-llm", action="store_true", help="跳过 LLM 语义评估，只进行硬过滤与测距")
+    p_run.add_argument("--no-rules", action="store_true", help="跳过本地规则与关键词过滤")
     p_run.add_argument(
         "-m", "--method",
         choices=["llm", "embedding", "hybrid"],
@@ -447,6 +455,12 @@ def main() -> int:
     # tui
     p_tui = subparsers.add_parser("tui", help="启动交互式终端界面 (Textual TUI)")
     p_tui.add_argument("-c", "--config", default=DEFAULT_CONFIG_NAME, help="配置文件路径")
+
+    # web
+    p_web = subparsers.add_parser("web", help="启动 Web 可视化管理控制台")
+    p_web.add_argument("-p", "--port", type=int, default=8765, help="Web 服务器端口 (默认: 8765)")
+    p_web.add_argument("--host", default="127.0.0.1", help="绑定主机地址 (默认: 127.0.0.1)")
+    p_web.add_argument("--no-open", action="store_true", help="启动时不自动打开浏览器")
 
     # candidates
     p_cand = subparsers.add_parser("candidates", aliases=["list"], help="列出已匹配的合格候选")
@@ -482,6 +496,7 @@ def main() -> int:
     command_map = {
         "run": cmd_run,
         "tui": cmd_tui,
+        "web": cmd_web,
         "candidates": cmd_candidates,
         "list": cmd_candidates,
         "rejected": cmd_rejected,

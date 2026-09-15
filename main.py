@@ -24,6 +24,12 @@ def main() -> int:
         run_tui()
         return 0
 
+    if "--web" in sys.argv:
+        sys.argv.remove("--web")
+        from zjjjzx.web import run_web_server
+        run_web_server()
+        return 0
+
     # If first argument is 'tui'
     if len(sys.argv) > 1 and sys.argv[1] == "tui":
         run_tui()

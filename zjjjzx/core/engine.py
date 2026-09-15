@@ -10,6 +10,7 @@ from zjjjzx.core.baidu_maps import BaiduMapsClient, BaiduMapsError
 from zjjjzx.core.embedding_client import EmbeddingMatcher
 from zjjjzx.core.fetcher import fetch_html
 from zjjjzx.core.filters import deterministic_score, hard_filter, sort_key
+from zjjjzx.core.keyword_filter import KeywordFilter
 from zjjjzx.core.llm_client import evaluate
 from zjjjzx.core.parser import Listing, parse_listings
 from zjjjzx.core.report import write_report
@@ -40,6 +41,7 @@ def run_pipeline(
     dry_run: bool = False,
     ignore_schedule: bool = False,
     enable_llm: bool = True,
+    enable_rules: bool = True,
     matcher_mode: str = "llm",  # "llm", "embedding", "hybrid"
     embedding_threshold: float | None = None,
     concurrency: int = 5,
@@ -95,6 +97,7 @@ def run_pipeline(
                 emit("log", level="warn", message=f"百度地图原点解析失败：{error}")
 
         scope = evaluation_scope(config)
+        kw_filter = KeywordFilter.from_config(config) if enable_rules else None
         new_count = 0
         total_listings = len(listings)
 
@@ -143,6 +146,23 @@ def run_pipeline(
                 rejected.append(rej_item)
                 emit("rejected_item", index=idx, total=total_listings, **rej_item)
                 continue
+
+            if kw_filter:
+                kw_passed, kw_reason = kw_filter.filter(listing, distance_meters)
+                if not kw_passed:
+                    store.save_evaluation(
+                        listing.external_id,
+                        {"hard_pass": False, "hard_reason": kw_reason, "evaluation_scope": scope},
+                    )
+                    rej_item = {
+                        "listing": listing,
+                        "stage": "规则过滤",
+                        "reason": kw_reason,
+                        "distance_meters": distance_meters,
+                    }
+                    rejected.append(rej_item)
+                    emit("rejected_item", index=idx, total=total_listings, **rej_item)
+                    continue
 
             existing = store.evaluation(listing.external_id)
             if existing and existing["notified"] and existing["evaluation_scope"] == scope and not dry_run:

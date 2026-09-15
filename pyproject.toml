@@ -50,11 +50,12 @@ dev = [
 [project.scripts]
 zjjjzx = "zjjjzx.cli:main"
 zjjjzx-tui = "zjjjzx.tui:run_tui"
+zjjjzx-web = "zjjjzx.web:run_web_server"
 
 [project.urls]
-Homepage = "https://github.com/your-username/zjjjzx-watcher"
-Repository = "https://github.com/your-username/zjjjzx-watcher.git"
-Issues = "https://github.com/your-username/zjjjzx-watcher/issues"
+Homepage = "https://github.com/connectedGraph/zjjjzx-watcher"
+Repository = "https://github.com/connectedGraph/zjjjzx-watcher.git"
+Issues = "https://github.com/connectedGraph/zjjjzx-watcher/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
