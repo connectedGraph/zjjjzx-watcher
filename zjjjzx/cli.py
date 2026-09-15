@@ -69,12 +69,34 @@ def cmd_run(args: argparse.Namespace) -> int:
             config["maps"]["city"] = args.city
 
     def execute_once() -> int:
-        with Status("[bold cyan]正在抓取与分析家教需求...", console=console) as status:
+        with Status("[bold cyan][阶段 1/3] 正在拉取家教平台最新发布...", console=console) as status:
+            candidates_found = 0
+
             def on_event(event: str, data: dict[str, Any]) -> None:
-                if event == "listings_fetched":
-                    status.update(f"[bold cyan]已拉取 {data['count']} 条家教，正在计算测距与筛选...")
+                nonlocal candidates_found
+                if event == "stage_change":
+                    status.update(f"[bold cyan]▶ {data.get('message', '')}")
+                elif event == "listings_fetched":
+                    status.update(f"[bold cyan][阶段 2/3] 已获取 {data['count']} 条，正在计算驾车距离与硬过滤...")
+                elif event == "listing_step":
+                    listing = data["listing"]
+                    idx = data["index"]
+                    total = data["total"]
+                    title_preview = listing.title[:14] if len(listing.title) > 14 else listing.title
+                    status.update(f"[bold cyan][阶段 2/3] 测距与初筛 [{idx}/{total}]: {title_preview}...")
+                elif event == "eval_progress":
+                    done = data["completed"]
+                    total = data["total"]
+                    listing = data["listing"]
+                    res_icon = "[green]✓通过[/green]" if data["passed"] else "[dim red]✗排除[/dim red]"
+                    title_preview = listing.title[:12] if len(listing.title) > 12 else listing.title
+                    status.update(
+                        f"[bold cyan][阶段 3/3] 并发语义评估 [{done}/{total} | 候选:{candidates_found}]: "
+                        f"{res_icon} [{listing.external_id}] {title_preview}"
+                    )
                 elif event == "candidate_added":
-                    status.update(f"[bold green]发现匹配候选：{data['listing'].external_id} ({data['points']}分)")
+                    candidates_found += 1
+                    status.update(f"[bold green]★ 发现匹配候选：{data['listing'].external_id} ({data['points']}分)")
                 elif event == "log" and data.get("level") in ("warn", "error"):
                     console.print(f"[yellow]提示：[/yellow] {data['message']}")
 
@@ -83,6 +105,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 dry_run=args.dry_run,
                 ignore_schedule=args.force,
                 enable_llm=not args.no_llm,
+                matcher_mode=getattr(args, "method", "llm"),
+                embedding_threshold=getattr(args, "threshold", None),
+                concurrency=getattr(args, "concurrency", 5),
                 on_event=on_event,
             )
 
@@ -398,6 +423,24 @@ def main() -> int:
     p_run.add_argument("--loop", action="store_true", help="持续轮询模式")
     p_run.add_argument("--interval", type=float, default=None, help="轮询间隔小时数")
     p_run.add_argument("--no-llm", action="store_true", help="跳过 LLM 语义评估，只进行硬过滤与测距")
+    p_run.add_argument(
+        "-m", "--method",
+        choices=["llm", "embedding", "hybrid"],
+        default="llm",
+        help="匹配研判方式: llm (大模型语义匹配), embedding (向量相似度极速初筛), hybrid (向量预筛+大模型复审)",
+    )
+    p_run.add_argument(
+        "-t", "--threshold",
+        type=float,
+        default=None,
+        help="Embedding 匹配阈值 (默认 0.08)",
+    )
+    p_run.add_argument(
+        "-j", "--concurrency",
+        type=int,
+        default=5,
+        help="LLM 并发评估线程数 (默认 5)",
+    )
     p_run.add_argument("--city", help="临时覆盖抓取城市名称")
     p_run.add_argument("-o", "--open-report", action="store_true", help="执行完成后自动在浏览器打开 HTML 报告")
 

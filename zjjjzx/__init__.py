@@ -4,6 +4,7 @@ __version__ = "0.2.0"
 
 from zjjjzx.config import load_config, load_dotenv, make_profile
 from zjjjzx.core.baidu_maps import BaiduMapsClient, BaiduMapsError, Coordinate, Route
+from zjjjzx.core.embedding_client import EmbeddingMatcher
 from zjjjzx.core.engine import run_pipeline
 from zjjjzx.core.fetcher import fetch_html
 from zjjjzx.core.filters import Profile, deterministic_score, hard_filter, sort_key
@@ -21,6 +22,7 @@ __all__ = [
     "BaiduMapsError",
     "Coordinate",
     "Route",
+    "EmbeddingMatcher",
     "run_pipeline",
     "fetch_html",
     "Profile",

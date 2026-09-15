@@ -250,8 +250,9 @@ class TutorWatcherApp(App):
                 with Horizontal(id="runner-controls"):
                     yield Button("开始抓取与评估", id="btn-start-scan", variant="success")
                     yield Checkbox("试运行 (Dry Run)", id="chk-dry-run", value=False)
-                    yield Checkbox("跳过 LLM 语义评估", id="chk-no-llm", value=False)
                     yield Checkbox("强制忽略时间窗口", id="chk-force-schedule", value=True)
+                    yield Checkbox("极速 Embedding 模式", id="chk-embedding-mode", value=False)
+                    yield Checkbox("跳过所有语义匹配", id="chk-no-llm", value=False)
                 yield RichLog(id="runner-log", highlight=True, markup=True)
 
             with TabPane("历史与统计", id="tab-history"):
@@ -530,11 +531,13 @@ class TutorWatcherApp(App):
         dry_run = self.query_one("#chk-dry-run", Checkbox).value
         no_llm = self.query_one("#chk-no-llm", Checkbox).value
         force = self.query_one("#chk-force-schedule", Checkbox).value
+        use_embedding = self.query_one("#chk-embedding-mode", Checkbox).value
+        matcher_mode = "embedding" if use_embedding else "llm"
 
-        self.run_scan_worker(dry_run=dry_run, no_llm=no_llm, force=force)
+        self.run_scan_worker(dry_run=dry_run, no_llm=no_llm, force=force, matcher_mode=matcher_mode)
 
     @work(thread=True)
-    def run_scan_worker(self, dry_run: bool, no_llm: bool, force: bool) -> None:
+    def run_scan_worker(self, dry_run: bool, no_llm: bool, force: bool, matcher_mode: str = "llm") -> None:
         runner_log = self.query_one("#runner-log", RichLog)
 
         def log_ui(msg: str) -> None:
@@ -543,8 +546,14 @@ class TutorWatcherApp(App):
         def on_event(event: str, data: dict[str, Any]) -> None:
             if event == "run_started":
                 log_ui(f"[bold cyan]▶ 任务启动[/bold cyan] (Run #{data.get('run_id')}): 请求 {data.get('url')}")
+            elif event == "stage_change":
+                log_ui(f"[bold cyan]▶ {data.get('message')}[/bold cyan]")
             elif event == "listings_fetched":
                 log_ui(f"[bold green]✓ 抓取成功:[/bold green] 获取到 {data.get('count')} 条家教需求")
+            elif event == "eval_progress":
+                res_tag = "[green]✓通过[/green]" if data.get("passed") else "[dim red]✗排除[/dim red]"
+                listing = data.get("listing")
+                log_ui(f"[cyan]  [{data.get('completed')}/{data.get('total')}] {res_tag} [{listing.external_id}] {listing.title[:16]}[/cyan]")
             elif event == "candidate_added":
                 listing = data.get("listing")
                 log_ui(
@@ -566,6 +575,8 @@ class TutorWatcherApp(App):
                 dry_run=dry_run,
                 ignore_schedule=force,
                 enable_llm=not no_llm,
+                matcher_mode=matcher_mode,
+                concurrency=5,
                 on_event=on_event,
             )
             if res.get("outside_schedule"):

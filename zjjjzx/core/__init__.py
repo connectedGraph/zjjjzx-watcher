@@ -1,4 +1,5 @@
 from zjjjzx.core.baidu_maps import BaiduMapsClient, BaiduMapsError, Coordinate, Route
+from zjjjzx.core.embedding_client import EmbeddingMatcher
 from zjjjzx.core.fetcher import fetch_html
 from zjjjzx.core.filters import Profile, deterministic_score, hard_filter, sort_key
 from zjjjzx.core.llm_client import evaluate
@@ -11,6 +12,7 @@ __all__ = [
     "BaiduMapsError",
     "Coordinate",
     "Route",
+    "EmbeddingMatcher",
     "fetch_html",
     "Profile",
     "deterministic_score",
