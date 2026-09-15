@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zjjjzx-watcher"
+version = "0.2.0"
+description = "智能家教需求抓取、高精地图驾车测距与 LLM 语义匹配终端 (CLI & TUI)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "zjjjzx-watcher contributors" }
+]
+keywords = [
+    "tutor",
+    "watcher",
+    "scraper",
+    "deepseek",
+    "llm",
+    "baidu-maps",
+    "cli",
+    "tui",
+    "textual",
+    "rich"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "rich>=13.0.0",
+    "textual>=0.50.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+zjjjzx = "zjjjzx.cli:main"
+zjjjzx-tui = "zjjjzx.tui:run_tui"
+
+[project.urls]
+Homepage = "https://github.com/your-username/zjjjzx-watcher"
+Repository = "https://github.com/your-username/zjjjzx-watcher.git"
+Issues = "https://github.com/your-username/zjjjzx-watcher/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["zjjjzx*"]
